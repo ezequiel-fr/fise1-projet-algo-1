@@ -77,6 +77,28 @@ direction pacman(
 	do
 	{
 		d = rand() % 4; // direction = enum compass that C maps NORTH to 0, EAST to 1,...
+
+		if (north && lastdirection == NORTH && d == SOUTH)
+		{
+			d = NORTH;
+			ok = true;
+		}
+		else if (east && lastdirection == EAST && d == WEST)
+		{
+			d = EAST;
+			ok = true;
+		}
+		else if (south && lastdirection == SOUTH && d == NORTH)
+		{
+			d = SOUTH;
+			ok = true;
+		}
+		else if (west && lastdirection == WEST && d == EAST)
+		{
+			d = WEST;
+			ok = true;
+		}
+
 		if (
 			(d == NORTH && north) ||
 			(d == EAST && east) ||
@@ -88,6 +110,9 @@ direction pacman(
 	// debug
 	if (DEBUG)
 	{
+		printf("Last direction: ");
+		directionprinter(lastdirection);
+		printf("\n");
 		printf("Next direction: ");
 		directionprinter(d);
 		printf("\n");

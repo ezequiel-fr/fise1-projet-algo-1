@@ -18,7 +18,8 @@
  *         double le vecteur qui va de Blinky à cette case ;
  *       Clyde vise Pac-Man s'il en est à plus de 8 cases, sinon son coin ;
  *   - EFFROI : pas de cible, direction tirée au hasard à chaque carrefour ;
- *   - MANGÉ : les yeux visent la porte de la maison, à grande vitesse.
+ *   - MANGÉ : les yeux rentrent à la maison à grande vitesse, par le plus
+ *     court chemin (voir choisir_direction).
  *
  * Blinky devient « Cruise Elroy » quand il reste peu de points : il accélère
  * et poursuit Pac-Man même pendant la dispersion.
@@ -27,13 +28,26 @@
 
 #include <limits.h>
 
-// Coins visés en dispersion (hors du labyrinthe, comme dans l'arcade).
-static const int COIN_X[NB_FANTOMES] = {25, 2, 27, 0};
-static const int COIN_Y[NB_FANTOMES] = {-3, -3, 31, 31};
+/*
+ * coin : case visée en dispersion, hors du labyrinthe comme dans l'arcade :
+ * en haut à droite (Blinky), en haut à gauche (Pinky), en bas à droite
+ * (Inky), en bas à gauche (Clyde).
+ */
+static void coin(const labyrinthe_t *l, nom_fantome_t n, int *x, int *y)
+{
+	*x = (n == BLINKY) ? l->largeur - 3 : (n == PINKY) ? 2 : (n == INKY) ? l->largeur - 1 : 0;
+	*y = (n == BLINKY || n == PINKY) ? -3 : l->hauteur;
+}
 
-// Positions de départ.
-static const int DEPART_X[NB_FANTOMES] = {SORTIE_X, MAISON_X, MAISON_X - 2, MAISON_X + 2};
-static const int DEPART_Y[NB_FANTOMES] = {SORTIE_Y, MAISON_Y, MAISON_Y, MAISON_Y};
+/*
+ * avancer_case : déplace (x, y) d'une case dans la direction d, en passant
+ * par les bords du labyrinthe (tunnels).
+ */
+static void avancer_case(const labyrinthe_t *l, int *x, int *y, direction_t d)
+{
+	*x = lab_x(l, *x + DX[d]);
+	*y = lab_y(l, *y + DY[d]);
+}
 
 /*
  * fantome_nom : nom d'un fantôme.
@@ -45,8 +59,9 @@ const char *fantome_nom(nom_fantome_t n)
 }
 
 /*
- * fantomes_placer : met les fantômes à leur position de départ. Blinky
- * commence dehors ; les trois autres attendent dans la maison.
+ * fantomes_placer : met les fantômes à leur position de départ, lue sur la
+ * carte. Ceux qui commencent dans la maison y attendent leur tour (dans les
+ * cartes fournies, Blinky commence dehors et les trois autres dedans).
  */
 void fantomes_placer(jeu_t *j)
 {
@@ -54,15 +69,15 @@ void fantomes_placer(jeu_t *j)
 	{
 		fantome_t *f = &j->f[i];
 		f->nom = (nom_fantome_t)i;
-		f->x = DEPART_X[i];
-		f->y = DEPART_Y[i];
+		f->x = j->lab.fant_x[i];
+		f->y = j->lab.fant_y[i];
 		f->avance = 0.0;
 		f->effraye = false;
 		f->demi_tour = false;
 		f->mode = j->mode;
 		f->cible_x = f->x;
 		f->cible_y = f->y;
-		if (i == BLINKY)
+		if (lab_case(&j->lab, f->x, f->y) != C_MAISON)
 		{
 			f->etat = F_ACTIF;
 			f->dir = GAUCHE;
@@ -99,7 +114,7 @@ double fantome_vitesse(const jeu_t *j, const fantome_t *f)
 		v = 1.6; // les yeux rentrent très vite
 	else if (f->etat == F_MAISON || f->etat == F_SORTIE)
 		v = 0.5;
-	else if (lab_tunnel(f->x, f->y))
+	else if (lab_tunnel(&j->lab, f->x, f->y))
 		v = p.tunnel;
 	else if (f->effraye)
 		v = p.fant_effroi;
@@ -123,10 +138,11 @@ void fantome_calculer_cible(const jeu_t *j, fantome_t *f)
 	mode_global_t mode = f->mode;
 	int tx, ty;
 
+	// Les yeux visent la case devant la porte (ou, sans maison, leur départ).
 	if (f->etat == F_MANGE)
 	{
-		f->cible_x = SORTIE_X;
-		f->cible_y = SORTIE_Y;
+		f->cible_x = j->lab.maison ? j->lab.sortie_x : j->lab.fant_x[f->nom];
+		f->cible_y = j->lab.maison ? j->lab.sortie_y : j->lab.fant_y[f->nom];
 		return;
 	}
 
@@ -136,8 +152,7 @@ void fantome_calculer_cible(const jeu_t *j, fantome_t *f)
 
 	if (mode == DISPERSION)
 	{
-		f->cible_x = COIN_X[f->nom];
-		f->cible_y = COIN_Y[f->nom];
+		coin(&j->lab, f->nom, &f->cible_x, &f->cible_y);
 		return;
 	}
 
@@ -174,10 +189,7 @@ void fantome_calculer_cible(const jeu_t *j, fantome_t *f)
 			ty = p->y;
 		}
 		else
-		{
-			tx = COIN_X[CLYDE];
-			ty = COIN_Y[CLYDE];
-		}
+			coin(&j->lab, CLYDE, &tx, &ty);
 		break;
 	}
 	}
@@ -206,6 +218,27 @@ static direction_t choisir_direction(jeu_t *j, fantome_t *f)
 		f->demi_tour = false;
 		if (lab_libre(&j->lab, f->x + DX[retour], f->y + DY[retour]))
 			return retour;
+		f->demi_tour = false;
+	}
+
+	// Yeux : plus court chemin jusqu'à la maison. (Avec la règle de l'arcade,
+	// glouton et sans demi-tour, les yeux peuvent tourner en rond indéfiniment
+	// dans certaines cartes de la version initiale.)
+	if (f->etat == F_MANGE && j->lab.maison)
+	{
+		direction_t meilleure_d = retour;
+		unsigned meilleure_l = 0xffff;
+		for (direction_t d = HAUT; d <= DROITE; d++)
+		{
+			int nx = lab_x(&j->lab, f->x + DX[d]), ny = lab_y(&j->lab, f->y + DY[d]);
+			if (lab_libre(&j->lab, nx, ny) && j->lab.dist_sortie[ny][nx] < meilleure_l)
+			{
+				meilleure_l = j->lab.dist_sortie[ny][nx];
+				meilleure_d = d;
+			}
+		}
+		fantome_calculer_cible(j, f);
+		return meilleure_d;
 	}
 
 	if (f->effraye)
@@ -228,7 +261,7 @@ static direction_t choisir_direction(jeu_t *j, fantome_t *f)
 
 		if (d == retour || !lab_libre(&j->lab, nx, ny))
 			continue;
-		if (d == HAUT && f->etat == F_ACTIF && lab_zone_rouge(f->x, f->y))
+		if (d == HAUT && f->etat == F_ACTIF && lab_zone_rouge(&j->lab, f->x, f->y))
 			continue;
 		dx = nx - f->cible_x;
 		dy = ny - f->cible_y;
@@ -277,65 +310,116 @@ static void sortie_terminee(jeu_t *j, fantome_t *f)
 }
 
 /*
+ * pas_maison : va-et-vient dans la maison en attendant de sortir (vertical si
+ * la maison est assez haute, sinon horizontal, sinon sur place).
+ */
+static void pas_maison(jeu_t *j, fantome_t *f)
+{
+	const labyrinthe_t *l = &j->lab;
+	direction_t d0 = f->dir == AUCUNE ? HAUT : f->dir;
+	direction_t essais[6] = {d0, opposee(d0), HAUT, BAS, GAUCHE, DROITE};
+
+	// On continue dans le même sens, sinon on repart en sens inverse, sinon
+	// on essaie les autres directions.
+	for (int k = 0; k < 6; k++)
+		if (lab_case(l, f->x + DX[essais[k]], f->y + DY[essais[k]]) == C_MAISON)
+		{
+			f->dir = essais[k];
+			avancer_case(l, &f->x, &f->y, f->dir);
+			return;
+		}
+}
+
+/*
+ * pas_sortie : rejoindre le centre de la maison (en suivant les distances
+ * précalculées), passer la porte, puis arriver devant : sortie terminée.
+ */
+static void pas_sortie(jeu_t *j, fantome_t *f)
+{
+	const labyrinthe_t *l = &j->lab;
+
+	if (f->x == l->porte_x && f->y == l->porte_y)
+	{
+		f->dir = (direction_t)l->dir_sortie;
+		f->x = l->sortie_x;
+		f->y = l->sortie_y;
+		sortie_terminee(j, f);
+	}
+	else if (f->x == l->centre_x && f->y == l->centre_y)
+	{
+		f->dir = (direction_t)l->dir_sortie;
+		f->x = l->porte_x;
+		f->y = l->porte_y;
+	}
+	else
+	{
+		for (direction_t d = HAUT; d <= DROITE; d++)
+		{
+			int nx = lab_x(l, f->x + DX[d]), ny = lab_y(l, f->y + DY[d]);
+			if (l->c[ny][nx] == C_MAISON && l->dist_maison[ny][nx] < l->dist_maison[f->y][f->x])
+			{
+				f->dir = d;
+				f->x = nx;
+				f->y = ny;
+				return;
+			}
+		}
+		f->x = l->centre_x; // (ne devrait pas arriver) : retour direct au centre
+		f->y = l->centre_y;
+	}
+}
+
+/*
  * pas_fantome : avance le fantôme d'une case selon son état.
  */
 static void pas_fantome(jeu_t *j, fantome_t *f)
 {
+	const labyrinthe_t *l = &j->lab;
+
 	switch (f->etat)
 	{
-	case F_MAISON: // va-et-vient vertical en attendant de sortir
-		if (f->dir != HAUT && f->dir != BAS)
-			f->dir = HAUT;
-		if (f->dir == HAUT && f->y <= MAISON_HAUT)
-			f->dir = BAS;
-		else if (f->dir == BAS && f->y >= MAISON_BAS)
-			f->dir = HAUT;
-		f->y += DY[f->dir];
+	case F_MAISON:
+		pas_maison(j, f);
 		break;
 
-	case F_SORTIE: // rejoindre le centre de la maison, puis monter par la porte
-		if (f->x != MAISON_X && f->y != MAISON_Y)
-		{
-			f->dir = f->y < MAISON_Y ? BAS : HAUT;
-			f->y += DY[f->dir];
-		}
-		else if (f->x != MAISON_X)
-		{
-			f->dir = f->x < MAISON_X ? DROITE : GAUCHE;
-			f->x += DX[f->dir];
-		}
-		else
-		{
-			f->dir = HAUT;
-			f->y--;
-			if (f->y == SORTIE_Y)
-				sortie_terminee(j, f);
-		}
+	case F_SORTIE:
+		pas_sortie(j, f);
 		break;
 
-	case F_RENTREE: // les yeux descendent jusqu'au centre de la maison
-		f->dir = BAS;
-		f->y++;
-		if (f->y >= MAISON_Y)
+	case F_RENTREE: // les yeux passent la porte et se régénèrent derrière
+		f->dir = opposee((direction_t)l->dir_sortie);
+		if (f->x == l->porte_x && f->y == l->porte_y)
 		{
+			f->x = l->centre_x;
+			f->y = l->centre_y;
 			f->etat = F_SORTIE; // régénéré, il ressort aussitôt
 			f->effraye = false;
 			jeu_journal(j, "%s est régénéré dans la maison", fantome_nom(f->nom));
 		}
+		else
+		{
+			f->x = l->porte_x;
+			f->y = l->porte_y;
+		}
 		break;
 
 	case F_MANGE:
-		if (f->x == SORTIE_X && f->y == SORTIE_Y)
+		fantome_calculer_cible(j, f);
+		if (f->x == f->cible_x && f->y == f->cible_y)
 		{
-			f->etat = F_RENTREE;
-			pas_fantome(j, f);
+			if (l->maison)
+			{
+				f->etat = F_RENTREE;
+				pas_fantome(j, f);
+			}
+			else
+				sortie_terminee(j, f); // sans maison : régénéré sur place
 			return;
 		}
 		/* fall through */
 	case F_ACTIF:
 		f->dir = choisir_direction(j, f);
-		f->x = lab_x(f->x + DX[f->dir]);
-		f->y += DY[f->dir];
+		avancer_case(l, &f->x, &f->y, f->dir);
 		break;
 	}
 }

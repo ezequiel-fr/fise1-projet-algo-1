@@ -88,6 +88,8 @@ typedef enum
 
 typedef struct
 {
+	const carte_t *cartes; // cartes jouées l'une après l'autre (niveau 1 : la première)
+	int nb_cartes;
 	labyrinthe_t lab;
 	pacman_t pac;
 	fantome_t f[NB_FANTOMES];
@@ -128,6 +130,7 @@ typedef struct
 	char journal[JOURNAL_TAILLE][JOURNAL_LONGUEUR];
 	int nb_journal;
 	bool journal_console; // recopier le journal sur la sortie standard (mode test)
+	bool silencieux;	  // pas de journal du tout (simulations de l'IA)
 	bool afficher_cibles;
 	int popup_x, popup_y, popup_points;
 	double popup_temps;
@@ -137,6 +140,7 @@ typedef struct
 	int stat_sorties_apres_effroi;
 	int stat_changements_mode;
 	int stat_vies_perdues;
+	int energies_mangees;
 } jeu_t;
 
 // Paramètres d'un niveau (tables de l'arcade).
@@ -156,7 +160,8 @@ typedef struct
 
 param_niveau_t jeu_param(int niveau);
 
-void jeu_init(jeu_t *j, int niveau, uint64_t graine, double vitesse);
+void jeu_init(jeu_t *j, const carte_t *cartes, int nb_cartes, int niveau, uint64_t graine, double vitesse);
+int jeu_echelle(const jeu_t *j, int points_arcade);
 void jeu_tic(jeu_t *j, double dt);
 void jeu_journal(jeu_t *j, const char *format, ...);
 unsigned jeu_alea(jeu_t *j);

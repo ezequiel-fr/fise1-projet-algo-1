@@ -1,8 +1,8 @@
 # Pac-Man (arcade) dans le terminal - Linux, WSL ou macOS.
 #   make          compile ./pacman
 #   make run      joue
-#   make demo     regarde le pilote automatique jouer
-#   make test     vérifie les cibles des fantômes et simule 20 parties
+#   make ia       regarde l'IA jouer
+#   make test     vérifie les règles des fantômes et fait jouer l'IA
 #   make clean
 
 CC      ?= gcc
@@ -11,7 +11,7 @@ CPPFLAGS = -D_POSIX_C_SOURCE=200809L
 SRC     := $(wildcard src/*.c)
 OBJ     := $(SRC:src/%.c=build/%.o)
 
-.PHONY: all run demo test clean
+.PHONY: all run ia test clean
 
 all: pacman
 
@@ -27,11 +27,11 @@ build:
 run: pacman
 	./pacman
 
-demo: pacman
-	./pacman --demo
+ia: pacman
+	./pacman --ia
 
 test: pacman
-	./pacman --test 20 --graine 42
+	./pacman --test 10 --graine 42
 
 clean:
 	rm -rf build pacman

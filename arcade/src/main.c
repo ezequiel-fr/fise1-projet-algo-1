@@ -1,11 +1,12 @@
 /*
- * main.c - Boucle principale : jeu au clavier, démo, et tests automatiques.
+ * main.c - Boucle principale : jeu au clavier, IA, et tests automatiques.
  *
- *   ./pacman               jouer
- *   ./pacman --demo        regarder le pilote automatique jouer
- *   ./pacman --test [N]    N parties simulées sans affichage, avec vérifications
+ *   ./pacman               jouer (cartes ../levels/levelN.map de la version initiale)
+ *   ./pacman --ia          regarder l'IA jouer
+ *   ./pacman --test [N]    vérifications + N parties jouées par l'IA sans affichage
  *
- * Options : --niveau N, --vitesse F (1 = vitesse de l'arcade), --graine N.
+ * Options : --carte FICHIER|arcade (répétable), --style ascii|blocs,
+ * --niveau N, --vitesse F (1 = vitesse de l'arcade), --graine N.
  */
 #include <stdbool.h>
 #include <stdio.h>
@@ -14,12 +15,15 @@
 #include <time.h>
 
 #include "fantomes.h"
+#include "ia.h"
 #include "jeu.h"
-#include "pilote.h"
 #include "rendu.h"
 #include "terminal.h"
 
-enum { TICS_PAR_SECONDE = 60, IMAGES_PAR_SECONDE = 30 };
+enum { TICS_PAR_SECONDE = 60, IMAGES_PAR_SECONDE = 30, MAX_CARTES = 16 };
+
+static carte_t cartes[MAX_CARTES];
+static int nb_cartes;
 
 static double maintenant(void)
 {
@@ -40,25 +44,76 @@ static void aide(void)
 {
 	puts("Pac-Man (arcade) dans le terminal\n"
 		 "\n"
-		 "  ./pacman [--demo] [--niveau N] [--vitesse F] [--graine N]\n"
-		 "  ./pacman --test [N] [--graine N] [--verbeux]\n"
+		 "  ./pacman [--ia] [--carte FICHIER|arcade]... [--style ascii|blocs]\n"
+		 "           [--niveau N] [--vitesse F] [--graine N]\n"
+		 "  ./pacman --test [N] [--carte ...] [--graine N] [--verbeux]\n"
 		 "\n"
-		 "  --demo       le pilote automatique joue (touche I pour l'activer ou le couper)\n"
+		 "  --ia         l'IA joue (touche I pour l'activer ou la couper)\n"
+		 "  --carte F    carte ASCII à jouer (répétable : une par niveau, en boucle) ;\n"
+		 "               « arcade » : plan de la borne. Par défaut : ../levels/levelN.map\n"
+		 "  --style S    ascii (caractères de la version initiale, défaut) ou blocs\n"
 		 "  --niveau N   niveau de départ (1 par défaut)\n"
 		 "  --vitesse F  facteur de vitesse, 1 = vitesse de l'arcade (défaut 1)\n"
 		 "  --graine N   graine du hasard (mouvements des fantômes effrayés)\n"
-		 "  --test N     simule N parties sans affichage et vérifie les règles\n"
+		 "  --test N     vérifie les règles puis fait jouer N parties à l'IA\n"
 		 "  --verbeux    avec --test : affiche le journal des événements\n"
 		 "\n"
 		 "Touches : flèches, ZQSD ou WASD pour diriger ; P pause ; C cibles des\n"
-		 "fantômes ; I pilote automatique (IA) ; N nouvelle partie ; X ou Échap pour quitter.");
+		 "fantômes ; I IA ; N nouvelle partie ; X ou Échap pour quitter.");
+}
+
+/*
+ * ajouter_carte : charge une carte (« arcade » : plan intégré).
+ */
+static bool ajouter_carte(const char *nom)
+{
+	char erreur[160];
+
+	if (nb_cartes == MAX_CARTES)
+	{
+		fprintf(stderr, "Trop de cartes (maximum %d)\n", MAX_CARTES);
+		return false;
+	}
+	if (strcmp(nom, "arcade") == 0)
+	{
+		carte_arcade(&cartes[nb_cartes++]);
+		return true;
+	}
+	if (!carte_charger(&cartes[nb_cartes], nom, erreur, sizeof erreur))
+	{
+		fprintf(stderr, "Erreur : %s\n", erreur);
+		return false;
+	}
+	nb_cartes++;
+	return true;
+}
+
+/*
+ * cartes_par_defaut : les cartes de la version initiale (levels/levelN.map,
+ * cherchées dans ../levels puis ./levels) ; à défaut, le plan de l'arcade.
+ */
+static void cartes_par_defaut(void)
+{
+	const char *dossiers[2] = {"../levels", "levels"};
+	char erreur[160], chemin[256];
+
+	for (int d = 0; d < 2 && nb_cartes == 0; d++)
+		for (int n = 1; n <= 9 && nb_cartes < MAX_CARTES; n++)
+		{
+			snprintf(chemin, sizeof chemin, "%s/level%d.map", dossiers[d], n);
+			if (carte_charger(&cartes[nb_cartes], chemin, erreur, sizeof erreur))
+				nb_cartes++;
+		}
+	if (nb_cartes == 0)
+		carte_arcade(&cartes[nb_cartes++]);
 }
 
 /*
  * verifier_cibles : vérifie le calcul des cibles de chaque fantôme sur des
- * situations connues (règles de l'arcade). Renvoie le nombre d'erreurs.
+ * situations connues (règles de l'arcade, sur le plan de l'arcade). Renvoie
+ * le nombre d'erreurs.
  */
-static int verifier_cibles(void)
+static int verifier_cibles(const carte_t *arcade)
 {
 	static jeu_t j;
 	int erreurs = 0;
@@ -77,7 +132,7 @@ static int verifier_cibles(void)
 			printf("  ok     %s -> (%d,%d)\n", description, ex, ey);                              \
 	} while (0)
 
-	jeu_init(&j, 1, 1, 1.0);
+	jeu_init(&j, arcade, 1, 1, 1, 1.0);
 	for (int i = 0; i < NB_FANTOMES; i++)
 	{
 		j.f[i].etat = F_ACTIF;
@@ -115,13 +170,15 @@ static int verifier_cibles(void)
  * elle ne doit plus être effrayée et doit suivre le mode global, alors que
  * l'effroi continue pour les fantômes restés dans le labyrinthe.
  */
-static int verifier_sortie_maison(void)
+static int verifier_sortie_maison(const carte_t *carte)
 {
 	static jeu_t j;
 	fantome_t *pinky = &j.f[PINKY];
 	int tics = 0;
 
-	jeu_init(&j, 1, 1, 1.0);
+	jeu_init(&j, carte, 1, 1, 1, 1.0);
+	if (!j.lab.maison || pinky->etat != F_MAISON)
+		return 0; // carte sans maison : scénario sans objet
 	j.phase = P_JEU;
 	j.mode = POURSUITE;
 	j.etape = 1;
@@ -136,45 +193,62 @@ static int verifier_sortie_maison(void)
 	if (pinky->etat == F_ACTIF && !pinky->effraye && pinky->mode == POURSUITE && j.temps_effroi > 0 &&
 		j.f[BLINKY].effraye)
 	{
-		printf("  ok     Pinky sort de la maison pendant l'effroi : plus effrayée, en POURSUITE "
-			   "(Blinky, dehors, reste effrayé)\n");
+		printf("  ok     %s : Pinky sort de la maison pendant l'effroi, plus effrayée, en POURSUITE\n",
+			   carte->nom);
 		return 0;
 	}
-	printf("  ERREUR sortie de la maison : état %d, effrayée %d, mode %d, effroi %.1f s\n", pinky->etat,
-		   pinky->effraye, pinky->mode, j.temps_effroi);
+	printf("  ERREUR %s, sortie de la maison : état %d, effrayée %d, mode %d, effroi %.1f s\n", carte->nom,
+		   pinky->etat, pinky->effraye, pinky->mode, j.temps_effroi);
 	return 1;
 }
 
 /*
- * tester : simule des parties avec le pilote automatique et vérifie à chaque
- * tic les règles importantes, dont la correction demandée : un fantôme qui
- * vient de sortir de la maison n'est jamais effrayé et suit le mode global.
+ * tester : vérifications, puis parties jouées par l'IA sans affichage. À
+ * chaque tic, on contrôle les règles importantes, dont la correction
+ * demandée : un fantôme qui vient de sortir de la maison n'est jamais
+ * effrayé et suit le mode global.
  */
 static int tester(int parties, uint64_t graine, bool verbeux)
 {
 	static jeu_t j;
-	int erreurs = verifier_cibles() + verifier_sortie_maison();
+	static carte_t arcade;
 	const double dt = 1.0 / TICS_PAR_SECONDE;
+	int erreurs, victoires = 0;
+
+	carte_arcade(&arcade);
+	printf("Vérifications des règles des fantômes :\n");
+	erreurs = verifier_cibles(&arcade) + verifier_sortie_maison(&arcade);
+	for (int c = 0; c < nb_cartes; c++)
+		erreurs += verifier_sortie_maison(&cartes[c]);
+
+	if (parties > 0)
+		printf("\nParties jouées par l'IA (cartes :");
+	for (int c = 0; c < nb_cartes && parties > 0; c++)
+		printf(" %s", cartes[c].nom);
+	if (parties > 0)
+		printf(", un niveau par carte puis on recommence) :\n");
 
 	for (int partie = 0; partie < parties; partie++)
 	{
 		etat_fantome_t avant[NB_FANTOMES];
 		long tics = 0;
+		ia_t ia;
+		int niveaux_vises = nb_cartes < 3 ? 3 : nb_cartes;
 
-		// Les parties commencent aux niveaux 1 à 5, pour couvrir les différentes tables.
-		jeu_init(&j, 1 + partie % 5, graine + (uint64_t)partie * 7919, 1.0);
+		ia_init(&ia);
+		jeu_init(&j, cartes, nb_cartes, 1, graine + (uint64_t)partie * 7919, 1.0);
 		j.journal_console = verbeux;
-		while (j.phase != P_GAME_OVER && tics < 20L * 60 * TICS_PAR_SECONDE && j.niveau <= 8)
+		while (j.phase != P_GAME_OVER && tics < 30L * 60 * TICS_PAR_SECONDE && j.niveau <= niveaux_vises)
 		{
 			for (int i = 0; i < NB_FANTOMES; i++)
 				avant[i] = j.f[i].etat;
-			pilote_choisir(&j);
+			ia_piloter(&ia, &j);
 			jeu_tic(&j, dt);
 			tics++;
 
-			if (!lab_libre(&j.lab, j.pac.x, j.pac.y) && lab_case(&j.lab, j.pac.x, j.pac.y) != C_VIDE)
+			if (!lab_libre(&j.lab, j.pac.x, j.pac.y))
 			{
-				printf("  ERREUR partie %d : Pac-Man dans un mur en (%d,%d)\n", partie, j.pac.x, j.pac.y);
+				printf("  ERREUR partie %d : Pac-Man sur une case interdite (%d,%d)\n", partie, j.pac.x, j.pac.y);
 				erreurs++;
 			}
 			for (int i = 0; i < NB_FANTOMES; i++)
@@ -192,7 +266,7 @@ static int tester(int parties, uint64_t graine, bool verbeux)
 					printf("  ERREUR partie %d : %s effrayé hors effroi\n", partie, fantome_nom(f->nom));
 					erreurs++;
 				}
-				if (c == C_MUR || c == C_NEANT || (f->etat == F_ACTIF && !lab_libre(&j.lab, f->x, f->y)))
+				if (c == C_MUR || (f->etat == F_ACTIF && !lab_libre(&j.lab, f->x, f->y)))
 				{
 					printf("  ERREUR partie %d : %s sur une case interdite (%d,%d)\n", partie,
 						   fantome_nom(f->nom), f->x, f->y);
@@ -202,28 +276,43 @@ static int tester(int parties, uint64_t graine, bool verbeux)
 			if (erreurs > 20)
 				return erreurs;
 		}
-		printf("  partie %2d : niveau %d -> %d, score %6ld, %3d fantômes mangés, %3d sorties après effroi, "
-			   "%3d changements de mode, %d vies perdues, %.0f s\n",
-			   partie + 1, 1 + partie % 5, j.niveau, j.score, j.stat_fantomes_manges, j.stat_sorties_apres_effroi,
-			   j.stat_changements_mode, j.stat_vies_perdues, j.temps_total);
+		if (j.niveau > niveaux_vises)
+			victoires++;
+		printf("  partie %2d : %-9s niveau atteint %d, score %8ld, %3d fantômes mangés, %d vies perdues, "
+			   "%2d sorties après effroi, %4.0f s de jeu, IA %.1f ms/décision\n",
+			   partie + 1, j.niveau > niveaux_vises ? "GAGNÉE" : "perdue", j.niveau, j.score,
+			   j.stat_fantomes_manges, j.stat_vies_perdues, j.stat_sorties_apres_effroi, j.temps_total,
+			   ia.decisions ? 1000.0 * ia.duree_totale / ia.decisions : 0.0);
 	}
+	if (parties > 0)
+		printf("  => %d partie(s) sur %d : les %d niveaux terminés\n", victoires, parties,
+			   nb_cartes < 3 ? 3 : nb_cartes);
 	return erreurs;
 }
 
 int main(int argc, char **argv)
 {
 	static jeu_t j;
-	bool demo = false, pause = false, verbeux = false;
+	ia_t ia;
+	bool avec_ia = false, pause = false, verbeux = false;
 	int niveau = 1, parties = -1;
 	double vitesse = 1.0, t_prec, reste = 0.0, t_image = 0.0;
 	uint64_t graine = (uint64_t)time(NULL);
+	style_t style = STYLE_ASCII;
 
 	for (int i = 1; i < argc; i++)
 	{
-		if (strcmp(argv[i], "--demo") == 0)
-			demo = true;
+		if (strcmp(argv[i], "--ia") == 0 || strcmp(argv[i], "--demo") == 0)
+			avec_ia = true;
 		else if (strcmp(argv[i], "--verbeux") == 0)
 			verbeux = true;
+		else if (strcmp(argv[i], "--carte") == 0 && i + 1 < argc)
+		{
+			if (!ajouter_carte(argv[++i]))
+				return 1;
+		}
+		else if (strcmp(argv[i], "--style") == 0 && i + 1 < argc)
+			style = strcmp(argv[++i], "blocs") == 0 ? STYLE_BLOCS : STYLE_ASCII;
 		else if (strcmp(argv[i], "--niveau") == 0 && i + 1 < argc)
 			niveau = atoi(argv[++i]);
 		else if (strcmp(argv[i], "--vitesse") == 0 && i + 1 < argc)
@@ -240,17 +329,18 @@ int main(int argc, char **argv)
 	}
 	if (vitesse <= 0)
 		vitesse = 1.0;
+	if (nb_cartes == 0)
+		cartes_par_defaut();
 
 	if (parties >= 0)
 	{
-		int erreurs;
-		printf("Vérifications des règles des fantômes :\n");
-		erreurs = tester(parties, graine, verbeux);
+		int erreurs = tester(parties, graine, verbeux);
 		printf("%s (%d erreur%s)\n", erreurs ? "ÉCHEC" : "SUCCÈS", erreurs, erreurs > 1 ? "s" : "");
 		return erreurs ? 1 : 0;
 	}
 
-	jeu_init(&j, niveau, graine, vitesse);
+	ia_init(&ia);
+	jeu_init(&j, cartes, nb_cartes, niveau, graine, vitesse);
 	terminal_ouvrir();
 	t_prec = maintenant();
 
@@ -259,22 +349,22 @@ int main(int argc, char **argv)
 		double t = maintenant();
 		int touche;
 
-		// Clavier.
+		// Clavier (toute direction reprend la main sur l'IA).
 		while ((touche = terminal_touche()) != TOUCHE_AUCUNE)
 		{
 			switch (touche)
 			{
 			case TOUCHE_HAUT: case 'z': case 'Z': case 'w': case 'W':
-				j.pac.voulue = HAUT, demo = false;
+				j.pac.voulue = HAUT, avec_ia = false;
 				break;
 			case TOUCHE_BAS: case 's': case 'S':
-				j.pac.voulue = BAS, demo = false;
+				j.pac.voulue = BAS, avec_ia = false;
 				break;
 			case TOUCHE_GAUCHE: case 'q': case 'Q': case 'a': case 'A':
-				j.pac.voulue = GAUCHE, demo = false;
+				j.pac.voulue = GAUCHE, avec_ia = false;
 				break;
 			case TOUCHE_DROITE: case 'd': case 'D':
-				j.pac.voulue = DROITE, demo = false;
+				j.pac.voulue = DROITE, avec_ia = false;
 				break;
 			case 'p': case 'P': case ' ':
 				pause = !pause;
@@ -283,10 +373,12 @@ int main(int argc, char **argv)
 				j.afficher_cibles = !j.afficher_cibles;
 				break;
 			case 'i': case 'I':
-				demo = !demo;
+				avec_ia = !avec_ia;
+				ia.valide = false;
 				break;
 			case 'n': case 'N':
-				jeu_init(&j, niveau, (uint64_t)time(NULL), vitesse);
+				jeu_init(&j, cartes, nb_cartes, niveau, (uint64_t)time(NULL), vitesse);
+				ia.valide = false;
 				pause = false;
 				break;
 			case 'x': case 'X': case 0x1b:
@@ -308,18 +400,16 @@ int main(int argc, char **argv)
 			reste -= 1.0 / TICS_PAR_SECONDE;
 			if (pause)
 				continue;
-			if (demo)
-				pilote_choisir(&j);
+			if (avec_ia)
+				ia_piloter(&ia, &j);
 			jeu_tic(&j, 1.0 / TICS_PAR_SECONDE);
-			if (j.phase == P_GAME_OVER && demo)
-				jeu_init(&j, niveau, (uint64_t)time(NULL), vitesse); // la démo recommence seule
 		}
 
 		// Affichage (30 images par seconde).
 		if (t - t_image >= 1.0 / IMAGES_PAR_SECONDE)
 		{
 			t_image = t;
-			rendu_dessiner(&j, demo, pause);
+			rendu_dessiner(&j, style, avec_ia, pause);
 		}
 		dormir(0.004);
 	}

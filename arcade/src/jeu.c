@@ -96,6 +96,8 @@ void jeu_journal(jeu_t *j, const char *format, ...)
 	char texte[JOURNAL_LONGUEUR - 12];
 	va_list args;
 
+	if (j->silencieux)
+		return;
 	va_start(args, format);
 	vsnprintf(texte, sizeof texte, format, args);
 	va_end(args);
@@ -123,6 +125,15 @@ unsigned jeu_alea(jeu_t *j)
 }
 
 /*
+ * jeu_echelle : les seuils de l'arcade (en nombre de points) sont prévus pour
+ * un labyrinthe de 244 points ; ils sont ramenés à la taille de la carte.
+ */
+int jeu_echelle(const jeu_t *j, int points_arcade)
+{
+	return (points_arcade * j->lab.points_total + 122) / 244;
+}
+
+/*
  * jeu_elroy : niveau de « Cruise Elroy » de Blinky (0, 1 ou 2).
  */
 int jeu_elroy(const jeu_t *j)
@@ -130,9 +141,9 @@ int jeu_elroy(const jeu_t *j)
 	param_niveau_t p = jeu_param(j->niveau);
 	if (j->elroy_suspendu)
 		return 0;
-	if (j->lab.points_restants <= p.elroy2_points)
+	if (j->lab.points_restants <= jeu_echelle(j, p.elroy2_points))
 		return 2;
-	if (j->lab.points_restants <= p.elroy1_points)
+	if (j->lab.points_restants <= jeu_echelle(j, p.elroy1_points))
 		return 1;
 	return 0;
 }
@@ -143,8 +154,8 @@ int jeu_elroy(const jeu_t *j)
  */
 static void placer_personnages(jeu_t *j)
 {
-	j->pac.x = PACMAN_X;
-	j->pac.y = PACMAN_Y;
+	j->pac.x = j->lab.pac_x;
+	j->pac.y = j->lab.pac_y;
 	j->pac.dir = GAUCHE;
 	j->pac.voulue = GAUCHE;
 	j->pac.avance = 0.0;
@@ -168,7 +179,7 @@ static void placer_personnages(jeu_t *j)
  */
 static void nouveau_niveau(jeu_t *j)
 {
-	lab_init(&j->lab);
+	lab_init(&j->lab, &j->cartes[(j->niveau - 1) % j->nb_cartes]);
 	j->manges_niveau = 0;
 	j->compteur_global_actif = false;
 	j->compteur_global = 0;
@@ -176,14 +187,16 @@ static void nouveau_niveau(jeu_t *j)
 	placer_personnages(j);
 	for (int i = 0; i < NB_FANTOMES; i++)
 		j->f[i].compteur_points = 0;
-	jeu_journal(j, "Niveau %d", j->niveau);
+	jeu_journal(j, "Niveau %d (carte %s)", j->niveau, j->cartes[(j->niveau - 1) % j->nb_cartes].nom);
 }
 
 /*
  * jeu_init : nouvelle partie (le record est conservé par l'appelant).
  */
-void jeu_init(jeu_t *j, int niveau, uint64_t graine, double vitesse)
+void jeu_init(jeu_t *j, const carte_t *cartes, int nb_cartes, int niveau, uint64_t graine, double vitesse)
 {
+	j->cartes = cartes;
+	j->nb_cartes = nb_cartes;
 	j->niveau = niveau < 1 ? 1 : niveau;
 	j->score = 0;
 	j->vies = 3;
@@ -198,6 +211,7 @@ void jeu_init(jeu_t *j, int niveau, uint64_t graine, double vitesse)
 	j->stat_sorties_apres_effroi = 0;
 	j->stat_changements_mode = 0;
 	j->stat_vies_perdues = 0;
+	j->energies_mangees = 0;
 	nouveau_niveau(j);
 	j->chrono = 3.0;
 }
@@ -340,7 +354,7 @@ static void maj_sorties(jeu_t *j, double dt)
 	j->temps_sans_point += dt;
 	if (f == NULL)
 		return;
-	if (!j->compteur_global_actif && f->compteur_points >= p.limite_points[f->nom])
+	if (!j->compteur_global_actif && f->compteur_points >= jeu_echelle(j, p.limite_points[f->nom]))
 		fantome_liberer(j, f);
 	else if (j->temps_sans_point >= p.limite_temps)
 	{
@@ -386,7 +400,7 @@ static void point_mange_sorties(jeu_t *j)
 static void manger_case(jeu_t *j)
 {
 	param_niveau_t p = jeu_param(j->niveau);
-	case_t *c = &j->lab.c[j->pac.y][j->pac.x];
+	unsigned char *c = &j->lab.c[j->pac.y][j->pac.x];
 
 	if (*c == C_POINT || *c == C_ENERGIE)
 	{
@@ -398,8 +412,11 @@ static void manger_case(jeu_t *j)
 		j->pac.pause = energie ? 3 : 1; // l'arcade fige Pac-Man 1 ou 3 images
 		point_mange_sorties(j);
 		if (energie)
+		{
+			j->energies_mangees++;
 			debut_effroi(j);
-		if (j->manges_niveau == 70 || j->manges_niveau == 170)
+		}
+		if (j->manges_niveau == jeu_echelle(j, 70) || j->manges_niveau == jeu_echelle(j, 170))
 		{
 			j->fruit_visible = true;
 			j->temps_fruit = 9.5;
@@ -411,11 +428,11 @@ static void manger_case(jeu_t *j)
 			jeu_journal(j, "Niveau %d terminé !", j->niveau);
 		}
 	}
-	else if (j->fruit_visible && j->pac.x == FRUIT_X && j->pac.y == FRUIT_Y)
+	else if (j->fruit_visible && j->pac.x == j->lab.fruit_x && j->pac.y == j->lab.fruit_y)
 	{
 		j->fruit_visible = false;
 		ajouter_score(j, p.fruit_points);
-		popup(j, FRUIT_X, FRUIT_Y, p.fruit_points);
+		popup(j, j->lab.fruit_x, j->lab.fruit_y, p.fruit_points);
 		jeu_journal(j, "%s mangée : %d points", p.fruit_nom, p.fruit_points);
 	}
 }
@@ -482,8 +499,8 @@ static void avancer_pacman(jeu_t *j, double dt)
 			return;
 		}
 		pac->avance -= 1.0;
-		pac->x = lab_x(pac->x + DX[pac->dir]);
-		pac->y += DY[pac->dir];
+		pac->x = lab_x(&j->lab, pac->x + DX[pac->dir]);
+		pac->y = lab_y(&j->lab, pac->y + DY[pac->dir]);
 		manger_case(j);
 		jeu_verifier_collisions(j);
 		if (j->phase != P_JEU || pac->pause > 0)

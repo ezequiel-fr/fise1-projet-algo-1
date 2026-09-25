@@ -8,6 +8,12 @@
 
 #include "jeu.h"
 
-void rendu_dessiner(const jeu_t *j, bool demo, bool pause);
+typedef enum
+{
+	STYLE_ASCII, // caractères de la version initiale, une colonne par case
+	STYLE_BLOCS	 // murs pleins, deux colonnes par case
+} style_t;
+
+void rendu_dessiner(const jeu_t *j, style_t style, bool ia, bool pause);
 
 #endif

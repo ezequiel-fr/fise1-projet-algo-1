@@ -107,12 +107,23 @@ direction pacman(
 		) ok = true;
 	} while (!ok);
 
+	// approche par algo glouton
+	int possible_d[4] = { north, east, south, west };
+
 	// debug
 	if (DEBUG)
 	{
-		printf("Last direction: ");
-		directionprinter(lastdirection);
-		printf("\n");
+		if (x > 0 && x < xsize - 1 && y > 0 && y < ysize - 1)
+		{
+			printf("Alentours : %c", map[x - 1][y]);
+			printf("Alentours : %c", map[x][y - 1]);
+			printf("Alentours : %c", map[x + 1][y]);
+			printf("Alentours : %c", map[x][y + 1]);
+		}
+
+		// printf("Last direction: ");
+		// directionprinter(lastdirection);
+		// printf("\n");
 		printf("Next direction: ");
 		directionprinter(d);
 		printf("\n");

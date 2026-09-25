@@ -1,0 +1,33 @@
+# --- Exécutables produits par la compilation ---------------------------------
+# gcc -std=c99 -Wall -o pacman pacman.o player.c    (sujet)
+# make / make all                                   (Makefile)
+pacman
+pacman.exe
+
+# Répertoire de travail du Makefile (binaires de test, build ASan, rendu...)
+build/
+
+# --- Objets et binaires intermédiaires ---------------------------------------
+*.o
+!pacman.o
+*.obj
+*.exe
+*.out
+*.a
+*.so
+*.dll
+*.dSYM/
+
+# --- Fichier de rendu Moodle (copie générée de player.c) ---------------------
+# make rendu recrée cette copie à la demande : inutile de la versionner.
+/nom-prenom.c
+/fridel-escalona-ezequiel.c
+
+# --- Divers ------------------------------------------------------------------
+core
+vgcore.*
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

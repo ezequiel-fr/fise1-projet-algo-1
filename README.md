@@ -122,11 +122,11 @@ moteur. C'est le bon interrupteur pour vos `printf` de mise au point.
 ```
         x croît vers l'EST  ──────────────►
    ┌────────────────────────────────────────┐
- y │  (0,0)                    (xsize-1, 0)  │   NORTH : y − 1
- c │                                         │   SOUTH : y + 1
- r │           map[y][x]                     │   EAST  : x + 1
- o │                                         │   WEST  : x − 1
- î │ (0, ysize-1)        (xsize-1, ysize-1)  │
+ y │  (0,0)                    (xsize-1, 0) │   NORTH : y − 1
+ c │                                        │   SOUTH : y + 1
+ r │           map[y][x]                    │   EAST  : x + 1
+ o │                                        │   WEST  : x − 1
+ î │ (0, ysize-1)        (xsize-1, ysize-1) │
  t └────────────────────────────────────────┘
 ```
 

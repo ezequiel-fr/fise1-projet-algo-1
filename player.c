@@ -113,12 +113,12 @@ direction pacman(
 	// debug
 	if (DEBUG)
 	{
-		if (x > 0 && x < xsize - 1 && y > 0 && y < ysize - 1)
+		if (x > 1 && x < xsize - 1 && y > 1 && y < ysize - 1)
 		{
-			printf("Alentours : %c", map[x - 1][y]);
-			printf("Alentours : %c", map[x][y - 1]);
-			printf("Alentours : %c", map[x + 1][y]);
-			printf("Alentours : %c", map[x][y + 1]);
+			printf("Alentours : %c\n", map[x - 1][y]);
+			printf("Alentours : %c\n", map[x][y - 1]);
+			printf("Alentours : %c\n", map[x + 1][y]);
+			printf("Alentours : %c\n", map[x][y + 1]);
 		}
 
 		// printf("Last direction: ");

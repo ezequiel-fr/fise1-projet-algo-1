@@ -12,7 +12,16 @@
 const char *student_name = "Ezequiel FRIDEL ESCALONA";
 
 // put the prototypes of your additional functions/procedures below
+// Macros
+#define print_boolean(b) printf("%s", b ? "true" : "false")
+
+// Functions
 static void directionprinter(direction d);
+
+// Matrix utils
+int **create_matrix(int rows, int cols, int default_value);
+void free_matrix(int **matrix, int rows);
+void print_matrix(int **matrix, int rows, int cols);
 
 // change the pacman function below to build your own player
 // your new pacman function can use as many additional functions/procedures as needed; put the code of these functions/procedures *AFTER* the pacman function
@@ -108,7 +117,62 @@ direction pacman(
 	} while (!ok);
 
 	// approche par algo glouton
+
 	int possible_d[4] = { north, east, south, west };
+	int choice_needed = 0;
+
+	if (north) choice_needed += east + west;
+	else if (east) choice_needed += north + south;
+	else if (south) choice_needed += east + west;
+	else if (west) choice_needed += north + south;
+
+	if (choice_needed)
+	{
+		// check the adjacent cells at 3 steps in each direction
+		const int steps = 3;
+		const int VIRGIN_PATH_WEIGHT = 5;
+
+		int **adj = create_matrix(4, steps, 0);
+
+		int direction_weights[4] = { 0, 0, 0, 0 };
+
+		// check the adjacent cells
+		for (int i = 1; i <= steps; i++)
+		{
+			if (north && y - i >= 0 && map[y - i][x] != WALL && map[y - i][x] != DOOR)
+			{
+				adj[NORTH][i - 1] = map[y - i][x] == VIRGIN_PATH ? VIRGIN_PATH_WEIGHT : 1;
+
+				direction_weights[NORTH] += adj[NORTH][i - 1];
+			}
+
+			if (east && x + i < xsize && map[y][x + i] != WALL && map[y][x + i] != DOOR)
+			{
+				adj[EAST][i - 1] = map[y][x + i] == VIRGIN_PATH ? VIRGIN_PATH_WEIGHT : 1;
+
+				direction_weights[EAST] += adj[EAST][i - 1];
+			}
+
+			if (south && y + i < ysize && map[y + i][x] != WALL && map[y + i][x] != DOOR)
+			{
+				adj[SOUTH][i - 1] = map[y + i][x] == VIRGIN_PATH ? VIRGIN_PATH_WEIGHT : 1;
+
+				direction_weights[SOUTH] += adj[SOUTH][i - 1];
+			}
+
+			if (west && x - i >= 0 && map[y][x - i] != WALL && map[y][x - i] != DOOR)
+			{
+				adj[WEST][i - 1] = map[y][x - i] == VIRGIN_PATH ? VIRGIN_PATH_WEIGHT : 1;
+
+				direction_weights[WEST] += adj[WEST][i - 1];
+			}
+		}
+
+		if (DEBUG) print_matrix(adj, 4, steps);
+
+		// calculate random path based on the weights of the adjacent cells
+		// 
+	}
 
 	// debug
 	if (DEBUG)
@@ -126,7 +190,7 @@ direction pacman(
 		// printf("\n");
 		printf("Next direction: ");
 		directionprinter(d);
-		printf("\n");
+		printf("\n");M
 	}
 
 	// answer to the game engine
@@ -142,4 +206,69 @@ static void directionprinter(direction d)
 		case SOUTH: printf("SOUTH"); break;
 		case WEST:  printf("WEST");  break;
 	}
+}
+
+int random_choice_weighted(int *weights, int size)
+{
+	int total_weight = 0;
+
+	for (int i = 0; i < size; i += 1)
+		total_weight += weights[i];
+
+	// avoid division by zero
+	int random_value = rand() % (total_weight || 4);
+
+	for (int i = 0; i < size; i += 1)
+	{
+		if (random_value < weights[i])
+			return i;
+		random_value -= weights[i];
+	}
+
+	return -1; // should not reach here
+}
+
+// Matrix utils
+int **create_matrix(int rows, int cols, int default_value)
+{
+	int **matrix = (int **)malloc(rows * sizeof(int *));
+
+	for (int i = 0; i < rows; i += 1)
+	{
+		matrix[i] = (int *)malloc(cols * sizeof(int));
+
+		for (int j = 0; j < cols; j += 1)
+			matrix[i][j] = default_value;
+	}
+
+	return matrix;
+}
+
+void free_matrix(int **matrix, int rows)
+{
+	for (int i = 0; i < rows; i += 1) free(matrix[i]);
+	free(matrix);
+}
+
+void print_matrix(int **matrix, int rows, int cols)
+{
+	printf("[\n");
+
+	for (int i = 0; i < rows; i += 1)
+	{
+		printf("  [");
+
+		for (int j = 0; j < cols; j += 1)
+		{
+			printf("%d", matrix[i][j]);
+			if (j < cols - 1) printf(", ");
+		}
+
+		printf("]");
+
+		if (i < rows - 1) printf(",");
+		printf("\n");
+	}
+
+	printf("]\n");
 }

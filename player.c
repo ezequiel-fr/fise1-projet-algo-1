@@ -15,13 +15,34 @@ const char *student_name = "Ezequiel FRIDEL ESCALONA";
 // Macros
 #define print_boolean(b) printf("%s", b ? "true" : "false")
 
+// Types and structures
+typedef struct Position { int x, y; } Position;
+
 // Functions
 static void directionprinter(direction d);
+static bool is_valid_direction(direction d, bool north, bool east, bool south, bool west);
+
+int random_choice_weighted(int *weights, int size);
+int apply_weight(int map_value);
+
+bool backtrack(Position pos, Position obj, char **map, int xsize, int ysize);
 
 // Matrix utils
-int **create_matrix(int rows, int cols, int default_value);
+int **create_matrix(int rows, int cols);
 void free_matrix(int **matrix, int rows);
+
+// Print utils
+void print_int_arr(int *arr, int size);
 void print_matrix(int **matrix, int rows, int cols);
+
+// Backtracking variables
+bool **visited = NULL;
+Position *path = NULL;
+
+unsigned int path_len = 0;
+
+const int dx[4] = { 0, 0, 1, -1 };
+const int dy[4] = { 1, -1, 0, 0 };
 
 // change the pacman function below to build your own player
 // your new pacman function can use as many additional functions/procedures as needed; put the code of these functions/procedures *AFTER* the pacman function
@@ -42,6 +63,7 @@ direction pacman(
 	bool east = false;	// indicate whether pacman can go east; no by default
 	bool south = false; // indicate whether pacman can go south; no by default
 	bool west = false;	// indicate whether pacman can go west; no by default
+
 	bool ok = false;	// turn true when a valid direction is randomly chosen
 
 	// can pacman go north?
@@ -108,71 +130,23 @@ direction pacman(
 			ok = true;
 		}
 
-		if (
-			(d == NORTH && north) ||
-			(d == EAST && east) ||
-			(d == SOUTH && south) ||
-			(d == WEST && west)
-		) ok = true;
+		if (is_valid_direction(d, north, east, south, west)) ok = true;
 	} while (!ok);
 
-	// approche par algo glouton
+	// Backtracking method
+	visited = (bool **)create_matrix(ysize, xsize);
+	path = (Position *)malloc(xsize * ysize * sizeof(Position));
 
-	int possible_d[4] = { north, east, south, west };
-	int choice_needed = 0;
+	// Backtrack
+	// ...
 
-	if (north) choice_needed += east + west;
-	else if (east) choice_needed += north + south;
-	else if (south) choice_needed += east + west;
-	else if (west) choice_needed += north + south;
+	// backtrack((Position){ x, y }, obj, map, xsize, ysize);
 
-	if (choice_needed)
-	{
-		// check the adjacent cells at 3 steps in each direction
-		const int steps = 3;
-		const int VIRGIN_PATH_WEIGHT = 5;
+	// Free backtracking matrix
+	free_matrix((int **)(visited), ysize);
+	free(path);
 
-		int **adj = create_matrix(4, steps, 0);
-
-		int direction_weights[4] = { 0, 0, 0, 0 };
-
-		// check the adjacent cells
-		for (int i = 1; i <= steps; i++)
-		{
-			if (north && y - i >= 0 && map[y - i][x] != WALL && map[y - i][x] != DOOR)
-			{
-				adj[NORTH][i - 1] = map[y - i][x] == VIRGIN_PATH ? VIRGIN_PATH_WEIGHT : 1;
-
-				direction_weights[NORTH] += adj[NORTH][i - 1];
-			}
-
-			if (east && x + i < xsize && map[y][x + i] != WALL && map[y][x + i] != DOOR)
-			{
-				adj[EAST][i - 1] = map[y][x + i] == VIRGIN_PATH ? VIRGIN_PATH_WEIGHT : 1;
-
-				direction_weights[EAST] += adj[EAST][i - 1];
-			}
-
-			if (south && y + i < ysize && map[y + i][x] != WALL && map[y + i][x] != DOOR)
-			{
-				adj[SOUTH][i - 1] = map[y + i][x] == VIRGIN_PATH ? VIRGIN_PATH_WEIGHT : 1;
-
-				direction_weights[SOUTH] += adj[SOUTH][i - 1];
-			}
-
-			if (west && x - i >= 0 && map[y][x - i] != WALL && map[y][x - i] != DOOR)
-			{
-				adj[WEST][i - 1] = map[y][x - i] == VIRGIN_PATH ? VIRGIN_PATH_WEIGHT : 1;
-
-				direction_weights[WEST] += adj[WEST][i - 1];
-			}
-		}
-
-		if (DEBUG) print_matrix(adj, 4, steps);
-
-		// calculate random path based on the weights of the adjacent cells
-		// 
-	}
+	path_len = 0;
 
 	// debug
 	if (DEBUG)
@@ -190,7 +164,7 @@ direction pacman(
 		// printf("\n");
 		printf("Next direction: ");
 		directionprinter(d);
-		printf("\n");M
+		printf("\n");
 	}
 
 	// answer to the game engine
@@ -208,38 +182,114 @@ static void directionprinter(direction d)
 	}
 }
 
+inline bool is_valid_direction(direction d, bool north, bool east, bool south, bool west)
+{
+	return false
+		|| (north && d == NORTH)
+		|| (east && d == EAST)
+		|| (south && d == SOUTH)
+		|| (west && d == WEST)
+	;
+}
+
 int random_choice_weighted(int *weights, int size)
 {
-	int total_weight = 0;
+	// Get the offset (minimum) to use, in order to compute with positive values only
+	int offset = weights[0];
 
-	for (int i = 0; i < size; i += 1)
-		total_weight += weights[i];
+	for (int i = 1; i < size; i += 1)
+		if (weights[i] < offset) offset = weights[i];
 
-	// avoid division by zero
-	int random_value = rand() % (total_weight || 4);
+	// Raise every value to be positive
+	unsigned int *positive_weights = (unsigned int *)malloc(size * sizeof(int));
+	unsigned int total = 0;
 
 	for (int i = 0; i < size; i += 1)
 	{
-		if (random_value < weights[i])
-			return i;
-		random_value -= weights[i];
+		positive_weights[i] = weights[i] + offset - 1;
+		total += positive_weights[i];
+	}
+
+	// Get a random value applying weights
+	int random_value = rand() % total;
+	if (random_value == 0) random_value += 1; // avoid reaching negative/minimum values
+
+	for (int i = 0; i < size; i += 1)
+	{
+		if (random_value < positive_weights[i]) return i;
+		random_value -= positive_weights[i];
 	}
 
 	return -1; // should not reach here
 }
 
+int apply_weight(int map_value)
+{
+	if (map_value == VIRGIN_PATH) return 5;
+	if (map_value == ENERGY) return 3;
+	if (map_value == PATH) return 1;
+
+	if (map_value == GHOST1
+		|| map_value == GHOST2
+		|| map_value == GHOST3
+		|| map_value == GHOST4
+	) return -1;
+
+	return 0;
+}
+
+bool backtrack(Position pos, Position obj, char **map, int xsize, int ysize)
+{
+	visited[pos.y][pos.x] = true;
+	path[path_len++] = pos;
+
+	if (pos.x == obj.x && pos.y == obj.y)
+		return true;
+
+	for (int i = 0; i < 4; i += 1)
+	{
+		int nx = pos.x + dx[i];
+		int ny = pos.y + dy[i];
+
+		bool north = false;
+		bool east  = false;
+		bool south = false;
+		bool west  = false;
+
+		// can pacman go north?
+		if (ny == 0 || (ny > 0 && map[ny - 1][nx] != WALL && map[ny - 1][nx] != DOOR))
+			north = true;
+		// can pacman go east?
+		if (nx == xsize - 1 || (nx < xsize - 1 && map[ny][nx + 1] != WALL && map[ny][nx + 1] != DOOR))
+			east = true;
+		// can pacman go south?
+		if (ny == ysize - 1 || (ny < ysize - 1 && map[ny + 1][nx] != WALL && map[ny + 1][nx] != DOOR))
+			south = true;
+		// can pacman go west?
+		if (nx == 0 || (nx > 0 && map[ny][nx - 1] != WALL && map[ny][nx - 1] != DOOR))
+			west = true;
+
+		if (is_valid_direction((direction)(i), north, east, south, west))
+		{
+			Position next = { nx, ny };
+			if (backtrack(next, obj, map, xsize, ysize)) return true;
+		}
+	}
+
+	// Go back in the backtracking
+	path_len -= 1;
+	visited[pos.y][pos.x] = false;
+
+	return false;
+}
+
 // Matrix utils
-int **create_matrix(int rows, int cols, int default_value)
+int **create_matrix(int rows, int cols)
 {
 	int **matrix = (int **)malloc(rows * sizeof(int *));
 
 	for (int i = 0; i < rows; i += 1)
-	{
-		matrix[i] = (int *)malloc(cols * sizeof(int));
-
-		for (int j = 0; j < cols; j += 1)
-			matrix[i][j] = default_value;
-	}
+		matrix[i] = (int *)calloc(cols, sizeof(int));
 
 	return matrix;
 }
@@ -248,6 +298,20 @@ void free_matrix(int **matrix, int rows)
 {
 	for (int i = 0; i < rows; i += 1) free(matrix[i]);
 	free(matrix);
+}
+
+// Print utils
+void print_int_arr(int *arr, int size)
+{
+	printf("[");
+
+	for (int i = 0; i < size;)
+	{
+		printf("%d", arr[i]);
+		if (++i != size) printf(", ");
+	}
+
+	printf("]\n");
 }
 
 void print_matrix(int **matrix, int rows, int cols)
